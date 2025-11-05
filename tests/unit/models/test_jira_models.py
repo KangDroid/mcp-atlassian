@@ -1094,7 +1094,7 @@ class TestJiraSearchResult:
         search_result = JiraSearchResult.from_api_response(api_data)
         # Verify that -1 is used for missing metadata
         assert search_result.total == -1
-        assert search_result.start_at == -1
+        assert search_result.start_at == 0
         assert search_result.max_results == -1
         assert len(search_result.issues) == 1  # Assuming mock data has issues
 

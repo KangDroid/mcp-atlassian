@@ -86,46 +86,65 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                 fields_param = fields
 
             if self.config.is_cloud:
+                # Use new /search/jql endpoint with pagination support
+                all_issues = []
+                next_page_token = None
                 actual_total = -1
-                try:
-                    # Call 1: Get metadata (including total) using standard search API
-                    metadata_params = {"jql": jql, "maxResults": 0}
-                    metadata_response = self.jira.get(
-                        self.jira.resource_url("search"), params=metadata_params
-                    )
 
-                    if (
-                        isinstance(metadata_response, dict)
-                        and "total" in metadata_response
-                    ):
-                        try:
-                            actual_total = int(metadata_response["total"])
-                        except (ValueError, TypeError):
-                            logger.warning(
-                                f"Could not parse 'total' from metadata response for JQL: {jql}. Received: {metadata_response.get('total')}"
-                            )
-                    else:
-                        logger.warning(
-                            f"Could not retrieve total count from metadata response for JQL: {jql}. Response type: {type(metadata_response)}"
-                        )
-                except Exception as meta_err:
-                    logger.error(
-                        f"Error fetching metadata for JQL '{jql}': {str(meta_err)}"
-                    )
+                while True:
+                    # Prepare request payload for new JQL API
+                    payload = {
+                        "jql": jql,
+                        "fields": fields_param.split(",") if fields_param else [],
+                        "maxResults": min(limit, 100),
+                    }
+                    if expand:
+                        payload["expand"] = expand.split(",")
+                    if next_page_token:
+                        payload["nextPageToken"] = next_page_token
 
-                # Call 2: Get the actual issues using the enhanced method
-                issues_response_list = self.jira.enhanced_jql_get_list_of_tickets(
-                    jql, fields=fields_param, limit=limit, expand=expand
-                )
+                    # Call new /search/jql endpoint
+                    response = self.jira.post("rest/api/3/search/jql", json=payload)
 
-                if not isinstance(issues_response_list, list):
-                    msg = f"Unexpected return value type from `jira.enhanced_jql_get_list_of_tickets`: {type(issues_response_list)}"
-                    logger.error(msg)
-                    raise TypeError(msg)
+                    if not isinstance(response, dict):
+                        msg = f"Unexpected return value type from search/jql: {type(response)}"
+                        logger.error(msg)
+                        raise TypeError(msg)
+
+                    # Extract issues and metadata
+                    if "issues" in response:
+                        all_issues.extend(response["issues"])
+
+                    if actual_total == -1 and "total" in response:
+                        actual_total = response["total"]
+
+                    # Check for more pages - new API uses isLast instead of nextPageToken
+                    is_last = response.get("isLast", True)
+                    next_page_token = response.get(
+                        "nextPageToken"
+                    )  # May not be present
+
+                    # Break if this is the last page or we've reached the limit
+                    if is_last or len(all_issues) >= limit:
+                        break
+
+                    # For pagination, we may need to use different approach
+                    # If nextPageToken is not available, we might need to use startAt
+                    if not next_page_token:
+                        # Fallback to startAt-based pagination
+                        current_start = response.get("startAt", len(all_issues))
+                        max_results_per_page = response.get("maxResults", 50)
+                        next_page_token = str(current_start + max_results_per_page)
+
+                # Limit results to requested amount
+                if len(all_issues) > limit:
+                    all_issues = all_issues[:limit]
 
                 response_dict_for_model = {
-                    "issues": issues_response_list,
+                    "issues": all_issues,
                     "total": actual_total,
+                    "maxResults": limit,
+                    "startAt": 0,
                 }
 
                 search_result = JiraSearchResult.from_api_response(
@@ -134,15 +153,19 @@ class SearchMixin(JiraClient, IssueOperationsProto):
                     requested_fields=fields_param,
                 )
 
-                # Return the full search result object
                 return search_result
             else:
-                limit = min(limit, 50)
+                # Server/DC: Keep using old /search endpoint (not deprecated for on-premise)
                 response = self.jira.jql(
-                    jql, fields=fields_param, start=start, limit=limit, expand=expand
+                    jql=jql,
+                    fields=fields_param,
+                    start=start,
+                    limit=min(limit, 50),
+                    expand=expand,
                 )
+
                 if not isinstance(response, dict):
-                    msg = f"Unexpected return value type from `jira.jql`: {type(response)}"
+                    msg = f"Unexpected return value type from jql: {type(response)}"
                     logger.error(msg)
                     raise TypeError(msg)
 

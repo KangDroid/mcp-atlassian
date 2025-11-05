@@ -780,7 +780,9 @@ class EpicsMixin(
         try:
             # Search for issues with type=Epic
             jql = "issuetype = Epic ORDER BY updated DESC"
-            response = self.jira.jql(jql, limit=1)
+            response = self.jira.post(
+                "rest/api/3/search/jql", json={"jql": jql, "maxResults": 1}
+            )
             if not isinstance(response, dict):
                 msg = f"Unexpected return value type from `jira.jql`: {type(response)}"
                 logger.error(msg)
@@ -811,7 +813,9 @@ class EpicsMixin(
                 f"issueFunction in issuesScopedToEpic('{epic_key}')",
             ]:
                 try:
-                    response = self.jira.jql(query, limit=5)
+                    response = self.jira.post(
+                        "rest/api/3/search/jql", json={"jql": query, "maxResults": 5}
+                    )
                     if not isinstance(response, dict):
                         msg = f"Unexpected return value type from `jira.jql`: {type(response)}"
                         logger.error(msg)

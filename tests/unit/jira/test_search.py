@@ -55,8 +55,8 @@ class TestSearchMixin:
     @pytest.mark.parametrize(
         "is_cloud, expected_method_name",
         [
-            (True, "enhanced_jql_get_list_of_tickets"),  # Cloud scenario
-            (False, "jql"),  # Server/DC scenario
+            (True, "post"),  # Cloud uses new /search/jql endpoint
+            (False, "jql"),  # Server/DC uses old jql method
         ],
     )
     def test_search_issues_calls_correct_method(
@@ -74,18 +74,11 @@ class TestSearchMixin:
             "https://test.example.com"  # Model creation needs this
         )
 
-        # Setup: Mock response for both API methods
-        search_mixin.jira.enhanced_jql_get_list_of_tickets = MagicMock(
-            return_value=mock_issues_response["issues"]
-        )
-        search_mixin.jira.jql = MagicMock(return_value=mock_issues_response)
-
-        # Determine other method name for assertion
-        other_method_name = (
-            "jql"
-            if expected_method_name == "enhanced_jql_get_list_of_tickets"
-            else "enhanced_jql_get_list_of_tickets"
-        )
+        # Setup: Mock response based on is_cloud
+        if is_cloud:
+            search_mixin.jira.post = MagicMock(return_value=mock_issues_response)
+        else:
+            search_mixin.jira.jql = MagicMock(return_value=mock_issues_response)
 
         # Act
         jql_query = "project = TEST"
@@ -96,25 +89,14 @@ class TestSearchMixin:
         assert len(result.issues) > 0  # Based on mocked response
 
         # Assert: Correct method call verification
-        expected_method_mock = getattr(search_mixin.jira, expected_method_name)
-
-        # Define expected kwargs based on whether it's Cloud or Server
-        expected_kwargs = {
-            "limit": 10,
-            "expand": None,
-        }
-
-        # Add start param only for Server/DC
-        if not is_cloud:
-            expected_kwargs["start"] = 0
-
-        expected_method_mock.assert_called_once_with(
-            jql_query, fields=ANY, **expected_kwargs
-        )
-
-        # Assert: Other method was not called
-        other_method_mock = getattr(search_mixin.jira, other_method_name)
-        other_method_mock.assert_not_called()
+        if is_cloud:
+            search_mixin.jira.post.assert_called_once_with(
+                "rest/api/3/search/jql", json=ANY
+            )
+        else:
+            search_mixin.jira.jql.assert_called_once_with(
+                jql=jql_query, fields=ANY, start=0, limit=10, expand=None
+            )
 
     def test_search_issues_basic(self, search_mixin: SearchMixin):
         """Test basic search functionality."""
@@ -138,20 +120,31 @@ class TestSearchMixin:
             "total": 1,
             "startAt": 0,
             "maxResults": 50,
+            "isLast": True,  # Add for Cloud API compatibility
         }
-        search_mixin.jira.jql.return_value = mock_issues
+
+        # Mock based on is_cloud setting
+        if hasattr(search_mixin.config, "is_cloud") and search_mixin.config.is_cloud:
+            search_mixin.jira.post = MagicMock(return_value=mock_issues)
+        else:
+            search_mixin.jira.jql = MagicMock(return_value=mock_issues)
 
         # Call the method
         result = search_mixin.search_issues("project = TEST")
 
-        # Verify
-        search_mixin.jira.jql.assert_called_once_with(
-            "project = TEST",
-            fields=ANY,
-            start=0,
-            limit=50,
-            expand=None,
-        )
+        # Verify based on is_cloud setting
+        if hasattr(search_mixin.config, "is_cloud") and search_mixin.config.is_cloud:
+            search_mixin.jira.post.assert_called_once_with(
+                "rest/api/3/search/jql", json=ANY
+            )
+        else:
+            search_mixin.jira.jql.assert_called_once_with(
+                jql="project = TEST",
+                fields=ANY,
+                start=0,
+                limit=50,
+                expand=None,
+            )
 
         # Verify results
         assert isinstance(result, JiraSearchResult)
@@ -198,8 +191,14 @@ class TestSearchMixin:
             "total": 1,
             "startAt": 0,
             "maxResults": 50,
+            "isLast": True,  # Add for Cloud API compatibility
         }
-        search_mixin.jira.jql.return_value = mock_issues
+
+        # Mock based on is_cloud setting
+        if hasattr(search_mixin.config, "is_cloud") and search_mixin.config.is_cloud:
+            search_mixin.jira.post = MagicMock(return_value=mock_issues)
+        else:
+            search_mixin.jira.jql = MagicMock(return_value=mock_issues)
 
         # Call the method
         result = search_mixin.search_issues("project = TEST")
@@ -230,8 +229,14 @@ class TestSearchMixin:
             "total": 1,
             "startAt": 0,
             "maxResults": 50,
+            "isLast": True,  # Add for Cloud API compatibility
         }
-        search_mixin.jira.jql.return_value = mock_issues
+
+        # Mock based on is_cloud setting
+        if hasattr(search_mixin.config, "is_cloud") and search_mixin.config.is_cloud:
+            search_mixin.jira.post = MagicMock(return_value=mock_issues)
+        else:
+            search_mixin.jira.jql = MagicMock(return_value=mock_issues)
 
         # Call the method
         result = search_mixin.search_issues("project = TEST")
@@ -246,8 +251,20 @@ class TestSearchMixin:
 
     def test_search_issues_with_empty_results(self, search_mixin: SearchMixin):
         """Test search with no results."""
-        # Setup mock response
-        search_mixin.jira.jql.return_value = {"issues": []}
+        # Setup mock response for empty results
+        empty_response = {
+            "issues": [],
+            "total": 0,
+            "startAt": 0,
+            "maxResults": 50,
+            "isLast": True,  # Add for Cloud API compatibility
+        }
+
+        # Mock based on is_cloud setting
+        if hasattr(search_mixin.config, "is_cloud") and search_mixin.config.is_cloud:
+            search_mixin.jira.post = MagicMock(return_value=empty_response)
+        else:
+            search_mixin.jira.jql = MagicMock(return_value={"issues": []})
 
         # Call the method
         result = search_mixin.search_issues("project = NONEXISTENT")
@@ -255,12 +272,19 @@ class TestSearchMixin:
         # Verify results
         assert isinstance(result, JiraSearchResult)
         assert len(result.issues) == 0
-        assert result.total == -1
+        # For Cloud, total should be 0; for Server/DC, it defaults to -1 when not provided
+        if hasattr(search_mixin.config, "is_cloud") and search_mixin.config.is_cloud:
+            assert result.total == 0
+        else:
+            assert result.total == -1
 
     def test_search_issues_with_error(self, search_mixin: SearchMixin):
         """Test search with API error."""
-        # Setup mock to raise exception
-        search_mixin.jira.jql.side_effect = Exception("API Error")
+        # Setup mock to raise exception based on is_cloud setting
+        if hasattr(search_mixin.config, "is_cloud") and search_mixin.config.is_cloud:
+            search_mixin.jira.post = MagicMock(side_effect=Exception("API Error"))
+        else:
+            search_mixin.jira.jql = MagicMock(side_effect=Exception("API Error"))
 
         # Call the method and verify it raises the expected exception
         with pytest.raises(Exception, match="Error searching issues"):
@@ -284,31 +308,61 @@ class TestSearchMixin:
             "total": 1,
             "startAt": 0,
             "maxResults": 50,
+            "isLast": True,  # Add for Cloud API compatibility
         }
-        search_mixin.jira.jql.return_value = mock_issues
+
+        # Mock based on is_cloud setting
+        if hasattr(search_mixin.config, "is_cloud") and search_mixin.config.is_cloud:
+            search_mixin.jira.post = MagicMock(return_value=mock_issues)
+        else:
+            search_mixin.jira.jql = MagicMock(return_value=mock_issues)
         search_mixin.config.url = "https://example.atlassian.net"
 
         # Test with single project filter
         result = search_mixin.search_issues("text ~ 'test'", projects_filter="TEST")
-        search_mixin.jira.jql.assert_called_with(
-            "(text ~ 'test') AND project = \"TEST\"",
-            fields=ANY,
-            start=0,
-            limit=50,
-            expand=None,
-        )
+
+        # Verify based on is_cloud setting
+        if hasattr(search_mixin.config, "is_cloud") and search_mixin.config.is_cloud:
+            search_mixin.jira.post.assert_called_with("rest/api/3/search/jql", json=ANY)
+            # Check the JQL in the payload
+            call_args = search_mixin.jira.post.call_args
+            payload = call_args[1]["json"]
+            assert payload["jql"] == "(text ~ 'test') AND project = \"TEST\""
+        else:
+            search_mixin.jira.jql.assert_called_with(
+                jql="(text ~ 'test') AND project = \"TEST\"",
+                fields=ANY,
+                start=0,
+                limit=50,
+                expand=None,
+            )
         assert len(result.issues) == 1
         assert result.total == 1
 
+        # Reset mock for next call
+        if hasattr(search_mixin.config, "is_cloud") and search_mixin.config.is_cloud:
+            search_mixin.jira.post.reset_mock()
+        else:
+            search_mixin.jira.jql.reset_mock()
+
         # Test with multiple project filter
         result = search_mixin.search_issues("text ~ 'test'", projects_filter="TEST,DEV")
-        search_mixin.jira.jql.assert_called_with(
-            '(text ~ \'test\') AND project IN ("TEST", "DEV")',
-            fields=ANY,
-            start=0,
-            limit=50,
-            expand=None,
-        )
+
+        # Verify based on is_cloud setting
+        if hasattr(search_mixin.config, "is_cloud") and search_mixin.config.is_cloud:
+            search_mixin.jira.post.assert_called_with("rest/api/3/search/jql", json=ANY)
+            # Check the JQL in the payload
+            call_args = search_mixin.jira.post.call_args
+            payload = call_args[1]["json"]
+            assert payload["jql"] == '(text ~ \'test\') AND project IN ("TEST", "DEV")'
+        else:
+            search_mixin.jira.jql.assert_called_with(
+                jql='(text ~ \'test\') AND project IN ("TEST", "DEV")',
+                fields=ANY,
+                start=0,
+                limit=50,
+                expand=None,
+            )
         assert len(result.issues) == 1
         assert result.total == 1
 
@@ -330,46 +384,93 @@ class TestSearchMixin:
             "total": 1,
             "startAt": 0,
             "maxResults": 50,
+            "isLast": True,  # Add for Cloud API compatibility
         }
-        search_mixin.jira.jql.return_value = mock_issues
+
+        # Mock based on is_cloud setting
+        if hasattr(search_mixin.config, "is_cloud") and search_mixin.config.is_cloud:
+            search_mixin.jira.post = MagicMock(return_value=mock_issues)
+        else:
+            search_mixin.jira.jql = MagicMock(return_value=mock_issues)
         search_mixin.config.url = "https://example.atlassian.net"
         search_mixin.config.projects_filter = "TEST,DEV"
 
         # Test with config filter
         result = search_mixin.search_issues("text ~ 'test'")
-        search_mixin.jira.jql.assert_called_with(
-            '(text ~ \'test\') AND project IN ("TEST", "DEV")',
-            fields=ANY,
-            start=0,
-            limit=50,
-            expand=None,
-        )
+
+        # Verify based on is_cloud setting
+        if hasattr(search_mixin.config, "is_cloud") and search_mixin.config.is_cloud:
+            search_mixin.jira.post.assert_called_with("rest/api/3/search/jql", json=ANY)
+            # Check the JQL in the payload
+            call_args = search_mixin.jira.post.call_args
+            payload = call_args[1]["json"]
+            assert payload["jql"] == '(text ~ \'test\') AND project IN ("TEST", "DEV")'
+        else:
+            search_mixin.jira.jql.assert_called_with(
+                jql='(text ~ \'test\') AND project IN ("TEST", "DEV")',
+                fields=ANY,
+                start=0,
+                limit=50,
+                expand=None,
+            )
         assert len(result.issues) == 1
         assert result.total == 1
 
+        # Reset mock for next call
+        if hasattr(search_mixin.config, "is_cloud") and search_mixin.config.is_cloud:
+            search_mixin.jira.post.reset_mock()
+        else:
+            search_mixin.jira.jql.reset_mock()
+
         # Test with override
         result = search_mixin.search_issues("text ~ 'test'", projects_filter="OVERRIDE")
-        search_mixin.jira.jql.assert_called_with(
-            "(text ~ 'test') AND project = \"OVERRIDE\"",
-            fields=ANY,
-            start=0,
-            limit=50,
-            expand=None,
-        )
+
+        # Verify based on is_cloud setting
+        if hasattr(search_mixin.config, "is_cloud") and search_mixin.config.is_cloud:
+            search_mixin.jira.post.assert_called_with("rest/api/3/search/jql", json=ANY)
+            # Check the JQL in the payload
+            call_args = search_mixin.jira.post.call_args
+            payload = call_args[1]["json"]
+            assert payload["jql"] == "(text ~ 'test') AND project = \"OVERRIDE\""
+        else:
+            search_mixin.jira.jql.assert_called_with(
+                jql="(text ~ 'test') AND project = \"OVERRIDE\"",
+                fields=ANY,
+                start=0,
+                limit=50,
+                expand=None,
+            )
         assert len(result.issues) == 1
         assert result.total == 1
+
+        # Reset mock for next call
+        if hasattr(search_mixin.config, "is_cloud") and search_mixin.config.is_cloud:
+            search_mixin.jira.post.reset_mock()
+        else:
+            search_mixin.jira.jql.reset_mock()
 
         # Test with override - multiple projects
         result = search_mixin.search_issues(
             "text ~ 'test'", projects_filter="OVER1,OVER2"
         )
-        search_mixin.jira.jql.assert_called_with(
-            '(text ~ \'test\') AND project IN ("OVER1", "OVER2")',
-            fields=ANY,
-            start=0,
-            limit=50,
-            expand=None,
-        )
+
+        # Verify based on is_cloud setting
+        if hasattr(search_mixin.config, "is_cloud") and search_mixin.config.is_cloud:
+            search_mixin.jira.post.assert_called_with("rest/api/3/search/jql", json=ANY)
+            # Check the JQL in the payload
+            call_args = search_mixin.jira.post.call_args
+            payload = call_args[1]["json"]
+            assert (
+                payload["jql"] == '(text ~ \'test\') AND project IN ("OVER1", "OVER2")'
+            )
+        else:
+            search_mixin.jira.jql.assert_called_with(
+                jql='(text ~ \'test\') AND project IN ("OVER1", "OVER2")',
+                fields=ANY,
+                start=0,
+                limit=50,
+                expand=None,
+            )
         assert len(result.issues) == 1
         assert result.total == 1
 
@@ -401,8 +502,14 @@ class TestSearchMixin:
             "total": 1,
             "startAt": 0,
             "maxResults": 50,
+            "isLast": True,  # Add for Cloud API compatibility
         }
-        search_mixin.jira.jql.return_value = mock_issues
+
+        # Mock based on is_cloud setting
+        if hasattr(search_mixin.config, "is_cloud") and search_mixin.config.is_cloud:
+            search_mixin.jira.post = MagicMock(return_value=mock_issues)
+        else:
+            search_mixin.jira.jql = MagicMock(return_value=mock_issues)
         search_mixin.config.url = "https://example.atlassian.net"
 
         # Call the method with specific fields
@@ -410,14 +517,23 @@ class TestSearchMixin:
             "project = TEST", fields="summary,assignee,customfield_10049"
         )
 
-        # Verify the JQL call includes the fields parameter
-        search_mixin.jira.jql.assert_called_once_with(
-            "project = TEST",
-            fields="summary,assignee,customfield_10049",
-            start=0,
-            limit=50,
-            expand=None,
-        )
+        # Verify the API call includes the fields parameter
+        if hasattr(search_mixin.config, "is_cloud") and search_mixin.config.is_cloud:
+            search_mixin.jira.post.assert_called_once_with(
+                "rest/api/3/search/jql", json=ANY
+            )
+            # Check the fields in the payload
+            call_args = search_mixin.jira.post.call_args
+            payload = call_args[1]["json"]
+            assert payload["fields"] == ["summary", "assignee", "customfield_10049"]
+        else:
+            search_mixin.jira.jql.assert_called_once_with(
+                jql="project = TEST",
+                fields="summary,assignee,customfield_10049",
+                start=0,
+                limit=50,
+                expand=None,
+            )
 
         # Verify results
         assert isinstance(result, JiraSearchResult)
@@ -580,52 +696,83 @@ class TestSearchMixin:
         )
         search_mixin.config.url = "https://test.example.com"
 
+        # Add isLast for Cloud API compatibility
+        mock_issues_response["isLast"] = True
+
         # Setup mock response for both API methods
-        search_mixin.jira.enhanced_jql_get_list_of_tickets = MagicMock(
-            return_value=mock_issues_response["issues"]
-        )
-        search_mixin.jira.jql = MagicMock(return_value=mock_issues_response)
-        api_method_mock = getattr(
-            search_mixin.jira, "enhanced_jql_get_list_of_tickets" if is_cloud else "jql"
-        )
+        if is_cloud:
+            search_mixin.jira.post = MagicMock(return_value=mock_issues_response)
+        else:
+            search_mixin.jira.jql = MagicMock(return_value=mock_issues_response)
 
         # Act: Single project filter
         search_mixin.search_issues("text ~ 'test'", projects_filter="TEST")
 
-        # Define expected kwargs based on is_cloud
-        expected_kwargs = {
-            "fields": ANY,
-            "limit": ANY,
-            "expand": ANY,
-        }
-        # Add start parameter only for Server/DC
-        if not is_cloud:
-            expected_kwargs["start"] = ANY
-
         # Assert: JQL verification
-        api_method_mock.assert_called_with(
-            "(text ~ 'test') AND project = \"TEST\"",  # Check constructed JQL
-            **expected_kwargs,
-        )
+        if is_cloud:
+            search_mixin.jira.post.assert_called_with("rest/api/3/search/jql", json=ANY)
+            # Check the JQL in the payload
+            call_args = search_mixin.jira.post.call_args
+            payload = call_args[1]["json"]
+            assert payload["jql"] == "(text ~ 'test') AND project = \"TEST\""
+        else:
+            search_mixin.jira.jql.assert_called_with(
+                jql="(text ~ 'test') AND project = \"TEST\"",
+                fields=ANY,
+                start=ANY,
+                limit=ANY,
+                expand=ANY,
+            )
 
         # Reset mock for next call
-        api_method_mock.reset_mock()
+        if is_cloud:
+            search_mixin.jira.post.reset_mock()
+        else:
+            search_mixin.jira.jql.reset_mock()
 
         # Act: Multiple projects filter
         search_mixin.search_issues("text ~ 'test'", projects_filter="TEST, DEV")
+
         # Assert: JQL verification
-        api_method_mock.assert_called_with(
-            '(text ~ \'test\') AND project IN ("TEST", "DEV")',  # Check constructed JQL
-            **expected_kwargs,
-        )
+        if is_cloud:
+            search_mixin.jira.post.assert_called_with("rest/api/3/search/jql", json=ANY)
+            # Check the JQL in the payload
+            call_args = search_mixin.jira.post.call_args
+            payload = call_args[1]["json"]
+            assert payload["jql"] == '(text ~ \'test\') AND project IN ("TEST", "DEV")'
+        else:
+            search_mixin.jira.jql.assert_called_with(
+                jql='(text ~ \'test\') AND project IN ("TEST", "DEV")',
+                fields=ANY,
+                start=ANY,
+                limit=ANY,
+                expand=ANY,
+            )
 
         # Reset mock for next call
-        api_method_mock.reset_mock()
+        if is_cloud:
+            search_mixin.jira.post.reset_mock()
+        else:
+            search_mixin.jira.jql.reset_mock()
 
-        # Act: Call with both JQL and filter
+        # Act: Call with both JQL and filter (existing JQL has priority)
         search_mixin.search_issues("project = OTHER", projects_filter="TEST")
-        # Assert: JQL verification (existing JQL has priority)
-        api_method_mock.assert_called_with("project = OTHER", **expected_kwargs)
+
+        # Assert: JQL verification (existing JQL has priority, so filter is ignored)
+        if is_cloud:
+            search_mixin.jira.post.assert_called_with("rest/api/3/search/jql", json=ANY)
+            # Check the JQL in the payload
+            call_args = search_mixin.jira.post.call_args
+            payload = call_args[1]["json"]
+            assert payload["jql"] == "project = OTHER"
+        else:
+            search_mixin.jira.jql.assert_called_with(
+                jql="project = OTHER",
+                fields=ANY,
+                start=ANY,
+                limit=ANY,
+                expand=ANY,
+            )
 
     @pytest.mark.parametrize("is_cloud", [True, False])
     def test_search_issues_with_config_projects_filter_jql_construction(
@@ -637,41 +784,60 @@ class TestSearchMixin:
         search_mixin.config.projects_filter = "CONF1,CONF2"  # Set config filter
         search_mixin.config.url = "https://test.example.com"
 
-        # Setup mock response for both API methods
-        search_mixin.jira.enhanced_jql_get_list_of_tickets = MagicMock(
-            return_value=mock_issues_response["issues"]
-        )
-        search_mixin.jira.jql = MagicMock(return_value=mock_issues_response)
-        api_method_mock = getattr(
-            search_mixin.jira, "enhanced_jql_get_list_of_tickets" if is_cloud else "jql"
-        )
+        # Add isLast for Cloud API compatibility
+        mock_issues_response["isLast"] = True
 
-        # Define expected kwargs based on is_cloud
-        expected_kwargs = {
-            "fields": ANY,
-            "limit": ANY,
-            "expand": ANY,
-        }
-        # Add start parameter only for Server/DC
-        if not is_cloud:
-            expected_kwargs["start"] = ANY
+        # Setup mock response for both API methods
+        if is_cloud:
+            search_mixin.jira.post = MagicMock(return_value=mock_issues_response)
+        else:
+            search_mixin.jira.jql = MagicMock(return_value=mock_issues_response)
 
         # Act: Use config filter
         search_mixin.search_issues("text ~ 'test'")
+
         # Assert: JQL verification
-        api_method_mock.assert_called_with(
-            '(text ~ \'test\') AND project IN ("CONF1", "CONF2")', **expected_kwargs
-        )
+        if is_cloud:
+            search_mixin.jira.post.assert_called_with("rest/api/3/search/jql", json=ANY)
+            # Check the JQL in the payload
+            call_args = search_mixin.jira.post.call_args
+            payload = call_args[1]["json"]
+            assert (
+                payload["jql"] == '(text ~ \'test\') AND project IN ("CONF1", "CONF2")'
+            )
+        else:
+            search_mixin.jira.jql.assert_called_with(
+                jql='(text ~ \'test\') AND project IN ("CONF1", "CONF2")',
+                fields=ANY,
+                start=ANY,
+                limit=ANY,
+                expand=ANY,
+            )
 
         # Reset mock for next call
-        api_method_mock.reset_mock()
+        if is_cloud:
+            search_mixin.jira.post.reset_mock()
+        else:
+            search_mixin.jira.jql.reset_mock()
 
         # Act: Override config filter with parameter
         search_mixin.search_issues("text ~ 'test'", projects_filter="OVERRIDE")
+
         # Assert: JQL verification
-        api_method_mock.assert_called_with(
-            "(text ~ 'test') AND project = \"OVERRIDE\"", **expected_kwargs
-        )
+        if is_cloud:
+            search_mixin.jira.post.assert_called_with("rest/api/3/search/jql", json=ANY)
+            # Check the JQL in the payload
+            call_args = search_mixin.jira.post.call_args
+            payload = call_args[1]["json"]
+            assert payload["jql"] == "(text ~ 'test') AND project = \"OVERRIDE\""
+        else:
+            search_mixin.jira.jql.assert_called_with(
+                jql="(text ~ 'test') AND project = \"OVERRIDE\"",
+                fields=ANY,
+                start=ANY,
+                limit=ANY,
+                expand=ANY,
+            )
 
     @pytest.mark.parametrize("is_cloud", [True, False])
     def test_search_issues_with_empty_jql_and_projects_filter(
@@ -683,44 +849,80 @@ class TestSearchMixin:
         search_mixin.config.projects_filter = None
         search_mixin.config.url = "https://test.example.com"
 
-        # Setup mock response for both API methods
-        search_mixin.jira.enhanced_jql_get_list_of_tickets = MagicMock(
-            return_value=mock_issues_response["issues"]
-        )
-        search_mixin.jira.jql = MagicMock(return_value=mock_issues_response)
-        api_method_mock = getattr(
-            search_mixin.jira, "enhanced_jql_get_list_of_tickets" if is_cloud else "jql"
-        )
+        # Add isLast for Cloud API compatibility
+        mock_issues_response["isLast"] = True
 
-        # Define expected kwargs based on is_cloud
-        expected_kwargs = {
-            "fields": ANY,
-            "limit": ANY,
-            "expand": ANY,
-        }
-        # Add start parameter only for Server/DC
-        if not is_cloud:
-            expected_kwargs["start"] = ANY
+        # Setup mock response for both API methods
+        if is_cloud:
+            search_mixin.jira.post = MagicMock(return_value=mock_issues_response)
+        else:
+            search_mixin.jira.jql = MagicMock(return_value=mock_issues_response)
 
         # Test 1: Empty string JQL with single project
         search_mixin.search_issues("", projects_filter="PROJ1")
-        api_method_mock.assert_called_with('project = "PROJ1"', **expected_kwargs)
+
+        if is_cloud:
+            search_mixin.jira.post.assert_called_with("rest/api/3/search/jql", json=ANY)
+            # Check the JQL in the payload
+            call_args = search_mixin.jira.post.call_args
+            payload = call_args[1]["json"]
+            assert payload["jql"] == 'project = "PROJ1"'
+        else:
+            search_mixin.jira.jql.assert_called_with(
+                jql='project = "PROJ1"',
+                fields=ANY,
+                start=ANY,
+                limit=ANY,
+                expand=ANY,
+            )
 
         # Reset mock
-        api_method_mock.reset_mock()
+        if is_cloud:
+            search_mixin.jira.post.reset_mock()
+        else:
+            search_mixin.jira.jql.reset_mock()
 
         # Test 2: Empty string JQL with multiple projects
         search_mixin.search_issues("", projects_filter="PROJ1,PROJ2")
-        api_method_mock.assert_called_with(
-            'project IN ("PROJ1", "PROJ2")', **expected_kwargs
-        )
+
+        if is_cloud:
+            search_mixin.jira.post.assert_called_with("rest/api/3/search/jql", json=ANY)
+            # Check the JQL in the payload
+            call_args = search_mixin.jira.post.call_args
+            payload = call_args[1]["json"]
+            assert payload["jql"] == 'project IN ("PROJ1", "PROJ2")'
+        else:
+            search_mixin.jira.jql.assert_called_with(
+                jql='project IN ("PROJ1", "PROJ2")',
+                fields=ANY,
+                start=ANY,
+                limit=ANY,
+                expand=ANY,
+            )
 
         # Reset mock
-        api_method_mock.reset_mock()
+        if is_cloud:
+            search_mixin.jira.post.reset_mock()
+        else:
+            search_mixin.jira.jql.reset_mock()
 
         # Test 3: None JQL with projects filter
         result = search_mixin.search_issues(None, projects_filter="PROJ1")
-        api_method_mock.assert_called_with('project = "PROJ1"', **expected_kwargs)
+
+        if is_cloud:
+            search_mixin.jira.post.assert_called_with("rest/api/3/search/jql", json=ANY)
+            # Check the JQL in the payload
+            call_args = search_mixin.jira.post.call_args
+            payload = call_args[1]["json"]
+            assert payload["jql"] == 'project = "PROJ1"'
+        else:
+            search_mixin.jira.jql.assert_called_with(
+                jql='project = "PROJ1"',
+                fields=ANY,
+                start=ANY,
+                limit=ANY,
+                expand=ANY,
+            )
         assert isinstance(result, JiraSearchResult)
 
     @pytest.mark.parametrize("is_cloud", [True, False])
@@ -733,58 +935,108 @@ class TestSearchMixin:
         search_mixin.config.projects_filter = None
         search_mixin.config.url = "https://test.example.com"
 
-        # Setup mock response for both API methods
-        search_mixin.jira.enhanced_jql_get_list_of_tickets = MagicMock(
-            return_value=mock_issues_response["issues"]
-        )
-        search_mixin.jira.jql = MagicMock(return_value=mock_issues_response)
-        api_method_mock = getattr(
-            search_mixin.jira, "enhanced_jql_get_list_of_tickets" if is_cloud else "jql"
-        )
+        # Add isLast for Cloud API compatibility
+        mock_issues_response["isLast"] = True
 
-        # Define expected kwargs based on is_cloud
-        expected_kwargs = {
-            "fields": ANY,
-            "limit": ANY,
-            "expand": ANY,
-        }
-        # Add start parameter only for Server/DC
-        if not is_cloud:
-            expected_kwargs["start"] = ANY
+        # Setup mock response based on is_cloud
+        if is_cloud:
+            search_mixin.jira.post = MagicMock(return_value=mock_issues_response)
+        else:
+            search_mixin.jira.jql = MagicMock(return_value=mock_issues_response)
 
         # Test 1: ORDER BY with single project
         search_mixin.search_issues("ORDER BY created DESC", projects_filter="PROJ1")
-        api_method_mock.assert_called_with(
-            'project = "PROJ1" ORDER BY created DESC', **expected_kwargs
-        )
+
+        # Verify the correct API was called
+        if is_cloud:
+            search_mixin.jira.post.assert_called_with("rest/api/3/search/jql", json=ANY)
+            # Check the JQL in the payload
+            call_args = search_mixin.jira.post.call_args
+            payload = call_args[1]["json"]
+            assert payload["jql"] == 'project = "PROJ1" ORDER BY created DESC'
+        else:
+            search_mixin.jira.jql.assert_called_with(
+                jql='project = "PROJ1" ORDER BY created DESC',
+                fields=ANY,
+                start=ANY,
+                limit=ANY,
+                expand=ANY,
+            )
 
         # Reset mock
-        api_method_mock.reset_mock()
+        if is_cloud:
+            search_mixin.jira.post.reset_mock()
+        else:
+            search_mixin.jira.jql.reset_mock()
 
         # Test 2: ORDER BY with multiple projects
         search_mixin.search_issues(
             "ORDER BY created DESC", projects_filter="PROJ1,PROJ2"
         )
-        api_method_mock.assert_called_with(
-            'project IN ("PROJ1", "PROJ2") ORDER BY created DESC', **expected_kwargs
-        )
+
+        if is_cloud:
+            search_mixin.jira.post.assert_called_with("rest/api/3/search/jql", json=ANY)
+            # Check the JQL in the payload
+            call_args = search_mixin.jira.post.call_args
+            payload = call_args[1]["json"]
+            assert (
+                payload["jql"] == 'project IN ("PROJ1", "PROJ2") ORDER BY created DESC'
+            )
+        else:
+            search_mixin.jira.jql.assert_called_with(
+                jql='project IN ("PROJ1", "PROJ2") ORDER BY created DESC',
+                fields=ANY,
+                start=ANY,
+                limit=ANY,
+                expand=ANY,
+            )
 
         # Reset mock
-        api_method_mock.reset_mock()
+        if is_cloud:
+            search_mixin.jira.post.reset_mock()
+        else:
+            search_mixin.jira.jql.reset_mock()
 
         # Test 3: Case insensitive ORDER BY
         search_mixin.search_issues("order by updated ASC", projects_filter="PROJ1")
-        api_method_mock.assert_called_with(
-            'project = "PROJ1" order by updated ASC', **expected_kwargs
-        )
+
+        if is_cloud:
+            search_mixin.jira.post.assert_called_with("rest/api/3/search/jql", json=ANY)
+            # Check the JQL in the payload
+            call_args = search_mixin.jira.post.call_args
+            payload = call_args[1]["json"]
+            assert payload["jql"] == 'project = "PROJ1" order by updated ASC'
+        else:
+            search_mixin.jira.jql.assert_called_with(
+                jql='project = "PROJ1" order by updated ASC',
+                fields=ANY,
+                start=ANY,
+                limit=ANY,
+                expand=ANY,
+            )
 
         # Reset mock
-        api_method_mock.reset_mock()
+        if is_cloud:
+            search_mixin.jira.post.reset_mock()
+        else:
+            search_mixin.jira.jql.reset_mock()
 
         # Test 4: ORDER BY with extra spaces
         search_mixin.search_issues(
             "  ORDER BY priority DESC  ", projects_filter="PROJ1"
         )
-        api_method_mock.assert_called_with(
-            'project = "PROJ1"   ORDER BY priority DESC  ', **expected_kwargs
-        )
+
+        if is_cloud:
+            search_mixin.jira.post.assert_called_with("rest/api/3/search/jql", json=ANY)
+            # Check the JQL in the payload
+            call_args = search_mixin.jira.post.call_args
+            payload = call_args[1]["json"]
+            assert payload["jql"] == 'project = "PROJ1"   ORDER BY priority DESC  '
+        else:
+            search_mixin.jira.jql.assert_called_with(
+                jql='project = "PROJ1"   ORDER BY priority DESC  ',
+                fields=ANY,
+                start=ANY,
+                limit=ANY,
+                expand=ANY,
+            )

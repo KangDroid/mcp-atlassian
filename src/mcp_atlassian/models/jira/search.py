@@ -31,6 +31,7 @@ class JiraSearchResult(ApiModel):
     ) -> "JiraSearchResult":
         """
         Create a JiraSearchResult from a Jira API response.
+        Supports both old and new API response formats.
 
         Args:
             data: The search result data from the Jira API
@@ -51,26 +52,39 @@ class JiraSearchResult(ApiModel):
         if isinstance(issues_data, list):
             for issue_data in issues_data:
                 if issue_data:
-                    requested_fields = kwargs.get("requested_fields")
-                    issues.append(
-                        JiraIssue.from_api_response(
-                            issue_data, requested_fields=requested_fields
+                    # New API: Check if issue_data is just a string (issue ID)
+                    if isinstance(issue_data, str):
+                        # Create minimal JiraIssue with just the key
+                        issues.append(JiraIssue(key=issue_data))
+                    else:
+                        # Old API or new API with fields: Full issue object
+                        requested_fields = kwargs.get("requested_fields")
+                        issues.append(
+                            JiraIssue.from_api_response(
+                                issue_data, requested_fields=requested_fields
+                            )
                         )
-                    )
 
+        # Handle different response formats between old and new APIs
         raw_total = data.get("total")
         raw_start_at = data.get("startAt")
         raw_max_results = data.get("maxResults")
 
-        try:
-            total = int(raw_total) if raw_total is not None else -1
-        except (ValueError, TypeError):
-            total = -1
+        # New API may not include these fields, especially when empty
+        # For new API, we need to infer values from available data
+        if raw_total is None and "isLast" in data:
+            # New API format - infer total from issues count if isLast=True
+            total = len(issues) if data.get("isLast", False) else -1
+        else:
+            try:
+                total = int(raw_total) if raw_total is not None else -1
+            except (ValueError, TypeError):
+                total = -1
 
         try:
-            start_at = int(raw_start_at) if raw_start_at is not None else -1
+            start_at = int(raw_start_at) if raw_start_at is not None else 0
         except (ValueError, TypeError):
-            start_at = -1
+            start_at = 0
 
         try:
             max_results = int(raw_max_results) if raw_max_results is not None else -1

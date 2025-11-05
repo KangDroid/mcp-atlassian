@@ -269,6 +269,13 @@ class JiraIssue(ApiModel, TimestampMixin):
         summary = str(fields.get("summary", EMPTY_STRING))
         description = fields.get("description")
 
+        # Handle ADF (Atlassian Document Format) description
+        if isinstance(description, dict):
+            # Extract plain text from ADF format if possible
+            description = None  # For now, skip complex ADF descriptions
+        elif description is not None:
+            description = str(description)
+
         # Timestamps
         created = str(fields.get("created", EMPTY_STRING))
         updated = str(fields.get("updated", EMPTY_STRING))
